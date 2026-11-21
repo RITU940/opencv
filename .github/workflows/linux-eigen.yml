@@ -1,0 +1,43 @@
+name: Mission 19 - Eigen-backed OpenCV qualification
+on:
+  push:
+    branches: [mission19-fitline4-qualification]
+permissions:
+  contents: read
+jobs:
+  eigen:
+    if: "${{ !github.event.deleted }}"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Install Eigen on the disposable runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence-eigen
+          {
+            lscpu
+            free -h
+            df -h "$RUNNER_TEMP"
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends libeigen3-dev
+          } 2>&1 | tee evidence-eigen/eigen-provision.log
+      - name: Stock RED and candidate GREEN with dispatch evidence
+        shell: bash
+        run: >
+          python ci/qualify.py eigen --scratch "$RUNNER_TEMP/mission19-eigen"
+          --artifacts "$GITHUB_WORKSPACE/evidence-eigen"
+      - name: Archive build, loaded modules, tests, and Eigen evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: mission19-linux-eigen
+          path: evidence-eigen/
+          if-no-files-found: warn
