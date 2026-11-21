@@ -35,7 +35,11 @@ CONTROLS = {f"Mission19_Controls.{name}" for name in (
     "ExtremeScales", "BlockBoundariesAndReversal", "TiedObjective")}
 NATIVE_CASES = EXPECTED_RED | {"Imgproc_FitLine.regression_15083", "Imgproc_FitLine.regression_4903"} | {
     f"fitLine_Modes.accuracy/{i}" for i in range(24)}
-FILTER = "*FitLine*:*fitLine*:" + DIAGNOSTIC
+# The full imgproc target also builds six public-API tests from test_imgwarp.cpp.
+API_CASES = {f"Imgproc_fitLine_{name}.regression" for name in (
+    "Mat_2dC1", "Mat_2dC2", "Mat_3dC1", "Mat_3dC3", "vector_2d", "vector_3d")}
+TESTED_NAMES = NATIVE_CASES | API_CASES | {DIAGNOSTIC}
+FILTER = ":".join(sorted(TESTED_NAMES))
 OPTIONS = (
     "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
     "-DBUILD_LIST=imgproc,ts", "-DBUILD_TESTS=ON", "-DBUILD_PERF_TESTS=OFF",
@@ -215,12 +219,15 @@ def main():
     for tool in ("cmake","ninja"):
         run([tool,"--version"], out/f"{tool}-version.log")
     run(["git","init","--quiet"], out/"git-init.log", cwd=source)
-    run(["git","config","core.autocrlf","false"], out/"git-line-endings.log", cwd=source)
+    run(["git","config","--local","core.autocrlf","false"], out/"git-autocrlf.log", cwd=source)
+    # Upstream marks C++ as text, so disabling autocrlf alone still permits native EOL.
+    run(["git","config","--local","core.eol","lf"], out/"git-eol.log", cwd=source)
     run(["git","fetch","--depth","1",args.upstream,PIN], out/"git-fetch.log", cwd=source)
     run(["git","checkout","--detach",PIN], out/"git-checkout.log", cwd=source)
     actual_pin = subprocess.check_output(["git","rev-parse","HEAD"], cwd=source, text=True).strip()
     if actual_pin != PIN:
         raise RuntimeError(f"Wrong OpenCV checkout: {actual_pin}")
+    run(["git","ls-files","--eol","--",*BASELINE_HASHES], out/"git-source-eol.log", cwd=source)
     baseline = verify_sources(source, BASELINE_HASHES)
     (out/"baseline-source-sha256.json").write_text(json.dumps(baseline, indent=2))
     reports = {}
@@ -262,7 +269,6 @@ def main():
         return
 
     initial = digest(test)
-    tested_names = NATIVE_CASES | {DIAGNOSTIC}
     stock_core_hash = None
     stock_imgproc_hash = None
     for phase in ("red", "green"):
@@ -290,10 +296,8 @@ def main():
         # The tiny stock case specifically stresses Jacobi's absolute threshold.
         # Eigen may resolve its subnormal matrix, so record either result on RED.
         optional = TINY_STOCK_TEST if phase == "red" and args.backend == "eigen" else None
-        tested_names = verify_xml(xml, EXPECTED_RED if phase=="red" else set(), 31, tested_names, optional)
+        verify_xml(xml, EXPECTED_RED if phase=="red" else set(), len(TESTED_NAMES), TESTED_NAMES, optional)
         (out/f"{phase}-case-results.json").write_text(json.dumps(test_results(xml), indent=2))
-        if DIAGNOSTIC not in tested_names:
-            raise RuntimeError("Missing in-process module evidence")
         loaded = verify_modules(log, build)
         evidence(out, phase, source, build, exe, loaded, args.backend == "eigen")
         imgproc = find_one((p for p in loaded if "opencv_imgproc" in p.name.lower()), "loaded imgproc")
